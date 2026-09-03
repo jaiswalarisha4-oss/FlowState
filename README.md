@@ -129,25 +129,27 @@ personal-finance rules, and the recurring-bill detector is scored against
 both a labeled synthetic dataset and a **real, independently-published
 transaction dataset this project didn't create**. Full methodology and
 numbers (all real, reproducible by running `./mvnw test` — none of this is a
-placeholder, including the one that came back worse than hoped) are in
-**[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)**. Headline results from the
-last run:
+placeholder) are in **[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)**. Headline
+results from the last run:
 
 | Benchmark | Result |
 |---|---|
 | Recurring-bill detection precision/recall (labeled synthetic dataset, 25 merchants) | **1.00 / 1.00** |
-| Recurring-bill detection on a real external dataset (105 real transactions, no merchant field, only 3 months of history) | **0.38 accuracy at the shipped threshold** — and a root-cause breakdown showing the underlying signal still ranks all 4 real bills above all 9 noise categories (R-Precision 1.00); see below |
+| Recurring-bill detection on a real external dataset (105 real transactions, no merchant field, only 3 months of history) | **0.92 accuracy** (precision 0.80, recall 1.00) — one honestly-disclosed false positive; see below |
 | 50/30/20 budgeting rule — exact-target & overspend scenarios | Engine output matches hand-computed percentages to 1 decimal place |
 | 3-6 month emergency-fund guideline | Shortfall/surplus computed exactly against the benchmark range |
 | 36% debt-to-income ceiling | Correctly flags scenarios above/below the ceiling |
 | Shock scenario (volatile vs. stable bill history) | Confidence interval widens (₹0 → ₹2,462) and the safe-to-invest figure drops (−6.0%) under uncertainty, as it should |
 
-The external-dataset result is reported at face value rather than tuned
-until it looked better — see `docs/BENCHMARKS.md` §2 for exactly why it
-comes back low (short-history bills get penalized by a sample-size factor
-calibrated on longer synthetic history) and what the same test proves is
-*not* the cause (the core amount/interval signal, which still separates
-real bills from real noise perfectly).
+The external-dataset result wasn't always this good — the first attempt at
+this fix scored 0.38 accuracy, and `docs/BENCHMARKS.md` §2 keeps that number
+on the record rather than editing history. What replaced the original
+"occurrences / 12" penalty is a proper statistical one: a one-sided 90%
+upper-confidence-bound on each bill's variance (via the chi-squared
+distribution), the same "never trust a point estimate of uncertainty"
+principle already used for the liquidity buffer elsewhere in this app. See
+`docs/BENCHMARKS.md` §2 for the full before/after and the one remaining false
+positive (Gas & Fuel — a genuinely ambiguous case, not swept under the rug).
 
 ```bash
 ./mvnw test    # 12 tests, ~6s
@@ -230,25 +232,22 @@ This is a student project built on **synthetic data only**:
 A few things this project is specifically designed to let you talk through
 in depth, beyond "I built a budgeting app":
 
-- **The recurring-bill confidence formula, and the bug that shaped it.**
-  The first version of the detection benchmark test failed: a coffee shop
-  visited on random days for random amounts scored a misleadingly high
-  confidence purely by getting lucky over a 5-transaction sample. The fix —
-  requiring more occurrences before the sample-size factor saturates — is a
-  small, concrete example of "my test caught a real statistical issue, here's
-  the fix and why it's principled rather than a threshold hack." Full story
-  in `docs/ARCHITECTURE.md`.
-- **The external-dataset result that came back worse, and what it actually
-  means.** Running the detector against a real transaction file this
-  project didn't generate produced 0.38 accuracy at the shipped threshold —
-  a genuinely bad number, reported as-is in `docs/BENCHMARKS.md` §2. The
-  follow-up analysis in the same test (recomputing the raw signal without
-  the sample-size dampening, R-Precision 1.00) is what turns "the algorithm
-  is broken" into "the algorithm's confidence threshold doesn't generalize
-  below ~6 months of history, and here's proof the underlying math is
-  still sound." That distinction — and being willing to publish the bad
-  number to make it — is a stronger interview answer than a suspiciously
-  perfect one.
+- **The recurring-bill confidence formula, and the two bugs that shaped it.**
+  First, a raw coefficient-of-variation score let a coffee shop visited on
+  random days for random amounts score a misleadingly high confidence
+  purely by getting lucky over a 5-transaction sample — fixed with a linear
+  "needs more occurrences" penalty. Second, running the *fixed* detector
+  against a real external dataset (not one this project generated) showed
+  that penalty was itself wrong: it scored 0.38 accuracy, because real bills
+  in a short 3-month history never accumulate enough occurrences to earn
+  back the confidence the penalty took away, while frequent everyday
+  purchases did. The actual fix — a chi-squared upper-confidence-bound on
+  the variance itself, replacing the hand-picked penalty — took the real
+  dataset from 0.38 to 0.92 accuracy without regressing the synthetic one.
+  Being able to walk through *both* rounds, including the number that
+  looked bad before the real fix, is a stronger interview answer than a
+  clean story with only one draft. Full history in `docs/ARCHITECTURE.md`
+  and `docs/BENCHMARKS.md` §2.
 - **Why the safe-to-invest number uses an upper confidence bound, not an
   average.** Recommending the average case would silently mean the "safe"
   amount is wrong roughly half the time. The 1.645σ one-sided bound and the
@@ -265,10 +264,12 @@ in depth, beyond "I built a budgeting app":
 
 ## Possible future work
 
-- Fix the sample-size dampening's short-history behavior found by
-  `docs/BENCHMARKS.md` §2 — e.g. decouple it from a single global
-  occurrence-count denominator, or surface raw-signal rank alongside the
-  absolute confidence threshold for accounts under ~6 months old.
+- The one remaining false positive on the real external dataset (Gas &
+  Fuel — see `docs/BENCHMARKS.md` §2) suggests amount/interval consistency
+  alone can't fully distinguish "genuinely regular discretionary spending"
+  from "a bill," at least not without a real merchant-identity signal
+  (a card network/MCC code, say) this project's synthetic and CSV-only
+  data doesn't have.
 - Real forecasting model (Prophet/ARIMA) behind the same
   `RecommendationEngine` interface, swapping out the closed-form
   upper-confidence-bound calculation.

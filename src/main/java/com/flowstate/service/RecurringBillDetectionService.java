@@ -43,38 +43,55 @@ import java.util.stream.Collectors;
  *             merged into the cluster (1.0 if they were already identical).</li>
  *       </ul>
  *       These combine as a weighted sum
- *       ({@code 0.45 * amount + 0.40 * interval + 0.15 * merchant}),
- *       then get scaled down by a sample-size factor
- *       ({@code min(1, occurrences / 12)}) so a bill seen only 3-5 times can't
- *       claim the same confidence as one with a full year of history even if
- *       it looks perfectly regular so far — small samples can look regular
- *       by chance — and multiplied by 100 to land on a
- *       0-100 confidence score. Nothing here is a binary "is this a bill"
- *       classifier by design: every flagged cluster carries the number, and
- *       the UI shows it rather than hiding the uncertainty.</li>
+ *       ({@code 0.45 * amount + 0.40 * interval + 0.15 * merchant}), multiplied
+ *       by 100 to land on a 0-100 confidence score. Nothing here is a binary
+ *       "is this a bill" classifier by design: every flagged cluster carries
+ *       the number, and the UI shows it rather than hiding the uncertainty.</li>
  * </ol>
  *
- * Precision/recall of this scoring against a labeled synthetic dataset is
- * measured in {@code RecurringBillDetectionBenchmarkTest} — see
- * docs/BENCHMARKS.md for the actual numbers from the last run.
+ * <h2>Why a variance upper-confidence-bound, not a raw coefficient of variation</h2>
+ * Amount consistency and interval regularity are never computed from the raw
+ * sample standard deviation. A handful of transactions can *look* consistent
+ * purely by chance — {@code RecurringBillDetectionBenchmarkTest} originally
+ * caught this: a coffee shop visited on random days for random amounts
+ * scored a misleadingly high confidence from a 5-transaction sample that
+ * happened to have low variance. The fix isn't an arbitrary "needs N
+ * occurrences" penalty on the final score — it's the same principle the
+ * liquidity buffer already uses elsewhere in this app: never trust a point
+ * estimate of variability, use an upper confidence bound on it. Each sample's
+ * sum of squared deviations is a chi-squared-distributed quantity with known
+ * degrees of freedom (occurrences-1 for amounts, gaps-1 for intervals), so a
+ * one-sided 90% upper confidence bound on the true variance is
+ * {@code sumSquaredDeviations / chiSquaredLowerQuantile(0.10, df)} — the
+ * lower-tail chi-squared quantile shrinks faster than df does as df gets
+ * small, so a 3-occurrence sample gets a properly inflated (more cautious)
+ * variance estimate, while an 11-occurrence sample's bound sits close to its
+ * plain sample variance. This degrades gracefully with history instead of
+ * needing a hand-picked "occurrences / 12" cutoff, and — importantly — it
+ * inflates the *estimate of uncertainty*, not the score itself, so a
+ * genuinely perfect small sample (three identical charges on the same day of
+ * three consecutive months) still scores high, while a merely so-so small
+ * sample doesn't get to borrow confidence it hasn't earned. See
+ * {@code docs/BENCHMARKS.md} for the real external dataset that motivated
+ * this over the simpler linear penalty it replaced.
+ *
+ * Precision/recall of this scoring against a labeled synthetic dataset, and
+ * against a real external dataset, are measured in
+ * {@code RecurringBillDetectionBenchmarkTest} and
+ * {@code RealWorldTransactionBenchmarkTest} — see docs/BENCHMARKS.md for the
+ * actual numbers from the last run.
  */
 @Service
 public class RecurringBillDetectionService {
 
     public static final int MIN_OCCURRENCES = 3;
     public static final double MERCHANT_FUZZY_THRESHOLD = 0.82;
-    public static final double DISPLAY_CONFIDENCE_THRESHOLD = 35.0;
+    public static final double DISPLAY_CONFIDENCE_THRESHOLD = 50.0;
 
-    /**
-     * Occurrence count at which the sample-size factor saturates at 1.0 — i.e. a bill needs
-     * roughly a full year of monthly history before amount/interval consistency alone can earn
-     * it full confidence. Below this, two merchants with statistically similar-looking
-     * consistency can still be told apart by how much evidence backs the number: a handful of
-     * occurrences that *happen* to look regular (a real risk with small samples — see
-     * {@code RecurringBillDetectionBenchmarkTest}) score lower than the same consistency backed
-     * by a year of history.
-     */
-    private static final double FULL_CONFIDENCE_OCCURRENCE_COUNT = 12.0;
+    /** One-sided confidence level for the variance upper-confidence-bound (see class Javadoc). */
+    private static final double VARIANCE_UCB_ALPHA = 0.10;
+    /** Standard normal 10th-percentile quantile, i.e. z such that Phi(z) = VARIANCE_UCB_ALPHA. */
+    private static final double Z_ALPHA_10 = -1.2816;
 
     public List<RecurringBill> detect(User user, List<Transaction> transactions) {
         List<Transaction> expenses = transactions.stream()
@@ -124,7 +141,8 @@ public class RecurringBillDetectionService {
         double[] amounts = txns.stream().mapToDouble(t -> t.getAmount().doubleValue()).toArray();
         double meanAmount = mean(amounts);
         double stdAmount = stdDev(amounts, meanAmount);
-        double amountConsistency = meanAmount <= 0 ? 0.0 : clamp01(1 - (stdAmount / meanAmount));
+        double amountUcbStdDev = varianceUpperBoundStdDev(amounts, meanAmount, amounts.length - 1);
+        double amountConsistency = meanAmount <= 0 ? 0.0 : clamp01(1 - (amountUcbStdDev / meanAmount));
 
         double[] intervals = new double[txns.size() - 1];
         for (int i = 1; i < txns.size(); i++) {
@@ -132,13 +150,12 @@ public class RecurringBillDetectionService {
         }
         double meanInterval = mean(intervals);
         double stdInterval = stdDev(intervals, meanInterval);
-        double intervalRegularity = meanInterval <= 0 ? 0.0 : clamp01(1 - (stdInterval / meanInterval));
+        double intervalUcbStdDev = varianceUpperBoundStdDev(intervals, meanInterval, intervals.length - 1);
+        double intervalRegularity = meanInterval <= 0 ? 0.0 : clamp01(1 - (intervalUcbStdDev / meanInterval));
 
         double merchantSimilarity = averagePairwiseSimilarity(mergedKeys);
 
-        double sampleSizeFactor = Math.min(1.0, txns.size() / FULL_CONFIDENCE_OCCURRENCE_COUNT);
-        double confidence = 100.0 * sampleSizeFactor
-                * (0.45 * amountConsistency + 0.40 * intervalRegularity + 0.15 * merchantSimilarity);
+        double confidence = 100.0 * (0.45 * amountConsistency + 0.40 * intervalRegularity + 0.15 * merchantSimilarity);
         confidence = Math.max(0.0, Math.min(100.0, confidence));
 
         RecurringBill bill = new RecurringBill();
@@ -206,6 +223,35 @@ public class RecurringBillDetectionService {
         double sumSq = 0;
         for (double v : values) sumSq += (v - mean) * (v - mean);
         return Math.sqrt(sumSq / values.length);
+    }
+
+    /**
+     * A one-sided {@code 1 - VARIANCE_UCB_ALPHA} confidence bound on the true standard
+     * deviation behind {@code values}, given {@code degreesOfFreedom} (occurrences-1 for
+     * amounts, gaps-1 for intervals). See the class Javadoc for why this replaces a plain
+     * sample standard deviation in the consistency formulas.
+     */
+    private static double varianceUpperBoundStdDev(double[] values, double mean, int degreesOfFreedom) {
+        if (degreesOfFreedom < 1) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double sumSq = 0;
+        for (double v : values) sumSq += (v - mean) * (v - mean);
+        double varianceUpperBound = sumSq / chiSquaredLowerQuantile(degreesOfFreedom);
+        return Math.sqrt(varianceUpperBound);
+    }
+
+    /**
+     * Wilson-Hilferty approximation of the chi-squared distribution's {@link #VARIANCE_UCB_ALPHA}
+     * lower-tail quantile: the value x such that P(X &le; x) = {@code VARIANCE_UCB_ALPHA} for
+     * X ~ chi-squared(df). Accurate to within a few percent for df &ge; 4; for smaller df it
+     * under-estimates the true quantile, which makes the resulting variance bound *more*
+     * conservative than a true 90% bound — the safe direction for a confidence score.
+     */
+    private static double chiSquaredLowerQuantile(int df) {
+        double h = 2.0 / (9.0 * df);
+        double term = Math.max(0.01, 1 - h + Z_ALPHA_10 * Math.sqrt(h));
+        return df * term * term * term;
     }
 
     private static double clamp01(double v) {

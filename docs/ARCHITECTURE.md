@@ -74,35 +74,46 @@ short:
    split one real bill into two.
 2. **Score** each cluster of ≥ 3 transactions on three signals normalized to
    `[0, 1]` — amount consistency, interval regularity, merchant-name
-   similarity — combined as a weighted sum, then scaled down by a sample-size
-   factor (`min(1, occurrences / 12)`) so a bill only seen 3-5 times can't
-   claim the same confidence as one backed by a full year of history, even if
-   it happens to look regular so far.
+   similarity — combined as a weighted sum. Amount consistency and interval
+   regularity are never computed from the raw sample variance: each is a
+   one-sided 90% upper-confidence-bound on the true variance (via the
+   chi-squared distribution — see `RecurringBillDetectionService`'s
+   Javadoc), so a handful of transactions that merely *look* consistent by
+   chance gets a properly inflated, more cautious variance estimate, while
+   a long, genuinely consistent history doesn't.
 
-This last point mattered in practice, not just in theory: the first version
-of the benchmark test (see `docs/BENCHMARKS.md`) failed because a handful of
-genuinely irregular merchants (a coffee shop visited on random days for
-random amounts) scored a misleadingly high confidence purely from getting
-lucky over a small sample. Requiring more history before trusting the
-consistency numbers fixed it — and is a more honest reflection of how
-confident anyone should be from 4-5 data points.
+This mattered in practice twice, not just in theory — the algorithm's
+scoring has been shaped by two rounds of its own benchmark tests catching
+real problems, not just passing them:
 
-That fix has a cost, and external validation is what surfaced it:
-`RealWorldTransactionBenchmarkTest` runs the same detector against a real,
-independently-published transaction file this project didn't generate. On
-that data — only 3 months of history, so genuine bills top out at 3
-occurrences — the sample-size dampening above pulls every real bill's
-confidence below the display threshold, while frequent-but-noisy
-discretionary categories (16 restaurant visits) sail past it. Accuracy on
-that run is a genuinely bad 0.38, and `docs/BENCHMARKS.md` reports that
-number as-is rather than around it. What the same test also shows is that
-the *underlying* amount/interval signal, recomputed without the dampening,
-still ranks all 4 real bills above all 9 noise categories (R-Precision
-1.00) — so the fix from the synthetic test and the failure on the real one
-are two sides of the same trade-off (confidence needs history to mean
-anything, but "needs history" has to degrade gracefully for a 3-month-old
-account, and right now it doesn't). That's a concrete, disclosed limitation
-rather than a papered-over one, and a natural next thing to fix.
+1. **The first version used a raw coefficient of variation with no
+   sample-size awareness at all.** `RecurringBillDetectionBenchmarkTest`
+   caught this: a coffee shop visited on random days for random amounts
+   scored a misleadingly high confidence purely from getting lucky over a
+   5-transaction sample.
+2. **The fix for that — a linear `occurrences / 12` penalty on the final
+   score — created a new, worse problem, caught by testing against a real
+   external dataset.** `RealWorldTransactionBenchmarkTest` runs the same
+   detector against a transaction file this project didn't generate. There,
+   genuine bills top out at 3 occurrences (the max possible in 3 months of
+   real history), so the linear penalty crushed them to 25% of their score,
+   while high-frequency noise (16 restaurant visits) kept nearly all of its
+   credit — accuracy on that run was a genuinely bad 0.38, reported as-is
+   in `docs/BENCHMARKS.md` rather than around. Recomputing the same
+   candidates' *uncorrected* consistency scores showed the underlying
+   amount/interval signal was fine all along (R-Precision 1.00, the four
+   real bills outranked all nine noise categories) — the linear penalty
+   itself was the bug, not the heuristic underneath it.
+
+The chi-squared upper-confidence-bound described above replaced that linear
+penalty specifically because it degrades gracefully with the *actual*
+statistical reliability of a small sample instead of an arbitrary occurrence
+count, and it fixed both: `RecurringBillDetectionBenchmarkTest` is still
+1.00/1.00, and `RealWorldTransactionBenchmarkTest` went from 0.38 to 0.92
+accuracy on the same real data. One false positive remains there (Gas &
+Fuel, a genuinely ambiguous case even by manual inspection) and is reported
+rather than hidden — see `docs/BENCHMARKS.md` §2 for the full numbers and
+exactly why it's the one case this heuristic still gets wrong.
 
 ## The recommendation engine's four checks
 

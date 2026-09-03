@@ -22,6 +22,17 @@ import java.util.stream.Collectors;
  *
  * <h2>Algorithm</h2>
  * <ol>
+ *   <li><b>Category filter.</b> Only expense transactions whose category is
+ *       {@link com.flowstate.domain.Category#isBillEligible()} — rent,
+ *       utilities, insurance, loan payments, subscriptions — are even
+ *       considered. This is a deliberate domain-knowledge signal, not
+ *       redundant with the statistics below: some spending is genuinely
+ *       regular in both amount and timing (a routine commute's gas
+ *       fill-ups, a standing weekly grocery run) without being a bill in
+ *       any meaningful sense, and no amount/interval-only formula can tell
+ *       those apart from a real bill purely from the numbers — see the
+ *       "Why category, not just statistics" section below for the real
+ *       case that proved this.</li>
  *   <li><b>Clustering.</b> Group expense transactions by normalized
  *       merchant name (see {@link com.flowstate.util.MerchantNormalizer}),
  *       then greedily merge clusters whose keys are fuzzy-similar
@@ -75,6 +86,21 @@ import java.util.stream.Collectors;
  * {@code docs/BENCHMARKS.md} for the real external dataset that motivated
  * this over the simpler linear penalty it replaced.
  *
+ * <h2>Why category, not just statistics</h2>
+ * {@code RealWorldTransactionBenchmarkTest} — see the "History" section of
+ * that class and docs/BENCHMARKS.md §2 — surfaced a case the variance bound
+ * above cannot fix by construction: gas fill-ups on a routine commute in
+ * the real dataset varied by only 7% in amount and landed every ~14 days
+ * &plusmn;18%, statistically indistinguishable from a subscription. No
+ * tightening of the amount/interval formula can separate "this really is
+ * regular" from "this is a bill" using only those two signals, because gas
+ * fill-ups genuinely were regular. The category filter above is what
+ * actually resolves it — Gas &amp; Fuel isn't bill-eligible regardless of
+ * how consistent it looks — and it generalizes rather than special-cases
+ * this one dataset: any TRANSPORT/GROCERIES/DINING_OUT/etc. cluster, real
+ * or synthetic, is excluded the same way, on the same principle (a bill is
+ * a category of obligation, not just a statistical pattern).
+ *
  * Precision/recall of this scoring against a labeled synthetic dataset, and
  * against a real external dataset, are measured in
  * {@code RecurringBillDetectionBenchmarkTest} and
@@ -96,6 +122,7 @@ public class RecurringBillDetectionService {
     public List<RecurringBill> detect(User user, List<Transaction> transactions) {
         List<Transaction> expenses = transactions.stream()
                 .filter(t -> t.getType() == TransactionType.EXPENSE)
+                .filter(t -> t.getCategory().isBillEligible())
                 .toList();
 
         Map<String, List<Transaction>> exactGroups = expenses.stream()

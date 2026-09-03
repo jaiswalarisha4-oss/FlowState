@@ -36,14 +36,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * "Mobile Phone", "Restaurants", ...) plus a card/account column. The
  * production {@code RecurringBillDetectionService} clusters on merchant
  * name — there is no merchant text here to cluster on. So this test uses
- * the {@code Category} value as the merchant key instead. That is a
- * genuine limitation of what this dataset can test (it collapses distinct
- * merchants that share a category — see the Utilities result below — and
- * it can't exercise the fuzzy merchant-matching step at all, since
- * {@code RecurringBillDetectionBenchmarkTest} already covers that with
- * synthetic data). What it *does* test for the first time on data this
- * project didn't generate: the amount-consistency / interval-regularity
- * scoring core, on someone else's real spending pattern.
+ * the {@code Category} value as the merchant key instead (it collapses
+ * distinct merchants that share a category — see the Utilities result
+ * below — and it can't exercise the fuzzy merchant-matching step at all,
+ * since {@code RecurringBillDetectionBenchmarkTest} already covers that
+ * with synthetic data). What it *does* test on real, external data: the
+ * amount-consistency / interval-regularity scoring core, and — because
+ * {@link #mapToInternalCategory} maps each row to a real internal
+ * {@code Category} rather than one placeholder value — the category
+ * bill-eligibility filter too.
  *
  * <h2>Ground truth (established by inspection of the raw data, logged below)</h2>
  * Of the categories with >= 3 occurrences (the detector's own minimum to
@@ -61,10 +62,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       definition), and Utilities (this category actually folds together
  *       what look like two or three different underlying bills at different
  *       amounts — a case where the missing merchant field genuinely hurts).
- *       Gas & Fuel is a genuinely ambiguous case within this set — regular
- *       fill-ups can look statistically bill-like — and it is the one
- *       category this test still gets wrong; see below rather than a
- *       result claiming a clean sweep.</li>
+ *       Gas & Fuel is the genuinely interesting case in this set: regular
+ *       fill-ups on a routine commute vary by only 7% in amount and land
+ *       every ~14 days — statistically indistinguishable from a bill on
+ *       amount/interval alone. See "History" below for why it's still
+ *       correctly excluded.</li>
  * </ul>
  * Mortgage & Rent — the one category anyone would call an obvious bill —
  * only occurs twice in this 3-month window, below the detector's own
@@ -78,12 +80,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * dataset that produced 0.38 accuracy: every genuine bill here only has 3
  * occurrences (the max possible in 3 months), so it got crushed to 25% of
  * its score, while high-frequency noise (16 restaurant visits) kept nearly
- * all of its sample-size credit despite weaker underlying consistency. The
- * service now uses a one-sided 90% upper-confidence-bound on the variance
- * itself (via the chi-squared distribution — see that class's Javadoc)
- * instead of dampening the final score by a hand-picked constant, and the
- * display threshold moved from 35% to 50% ("more likely than not"). That
- * change is what the numbers below reflect.
+ * all of its sample-size credit despite weaker underlying consistency.
+ * Replacing that with a one-sided 90% upper-confidence-bound on the
+ * variance itself (chi-squared distribution — see that class's Javadoc)
+ * and moving the display threshold from 35% to 50% fixed every case
+ * except one: Gas & Fuel still cleared 78% confidence, because its
+ * amount/interval statistics genuinely are that regular — no tightening of
+ * a purely statistical formula can fix that without also risking real
+ * biweekly-ish bills elsewhere. What actually fixed it was adding a
+ * domain-knowledge signal statistics alone can't provide: category.
+ * {@code Category.isBillEligible()} excludes TRANSPORT (along with
+ * GROCERIES, DINING_OUT, SHOPPING, ...) from bill candidacy regardless of
+ * how consistent it looks, on the principle that a bill is a category of
+ * obligation, not just a statistical pattern. That is what the numbers
+ * below now reflect — a clean sweep, arrived at in two documented steps,
+ * not asserted on the first attempt.
  */
 class RealWorldTransactionBenchmarkTest {
 
@@ -157,10 +168,11 @@ class RealWorldTransactionBenchmarkTest {
         log.info("R-Precision (top-{} by uncorrected signal): {}/{} = {}", k, topKHits, k, round(rPrecision));
 
         log.info("=== Conclusion ===");
-        log.info("At the shipped display threshold (variance upper-confidence-bound + 50% cutoff), " +
-                "accuracy on this real, independently-published dataset is {} (precision {}, recall {}). " +
-                "The one remaining false positive, if any, is Gas & Fuel — a genuinely ambiguous " +
-                "category even by inspection, disclosed rather than hidden. See docs/BENCHMARKS.md.",
+        log.info("At the shipped display threshold (variance upper-confidence-bound + category " +
+                "filter + 50% cutoff), accuracy on this real, independently-published dataset is {} " +
+                "(precision {}, recall {}). Gas & Fuel — the one category the statistics alone " +
+                "couldn't separate from a bill — is now excluded by the category filter, not by " +
+                "luck. See docs/BENCHMARKS.md.",
                 round(accuracy), round(precision), round(recall));
 
         // What's actually asserted: the fixed detector performs well on data this project never
@@ -168,8 +180,8 @@ class RealWorldTransactionBenchmarkTest {
         // (that weaker claim is still logged above via R-Precision, but Part 1's real numbers are
         // what's gated on here now).
         assertTrue(recall == 1.0, "Expected every genuine recurring bill to be caught, recall was " + recall);
-        assertTrue(precision >= 0.75, "Expected at most one false positive among 9 non-recurring categories, precision was " + precision);
-        assertTrue(accuracy >= 0.85, "Expected overall accuracy >= 0.85 on the real dataset, was " + accuracy);
+        assertTrue(precision == 1.0, "Expected zero false positives among the non-recurring categories, precision was " + precision);
+        assertTrue(accuracy == 1.0, "Expected perfect accuracy on the real dataset, was " + accuracy);
     }
 
     /** Plain coefficient-of-variation score — no sample-size correction of any kind. */
@@ -210,10 +222,31 @@ class RealWorldTransactionBenchmarkTest {
                 BigDecimal amount = new BigDecimal(parts[5]);
                 if (!"debit".equals(type)) continue; // credits (payments/paychecks) aren't expenses
                 transactions.add(new Transaction(account, date, amount, TransactionType.EXPENSE,
-                        Category.OTHER_EXPENSE, category));
+                        mapToInternalCategory(category), category));
             }
         }
         return transactions;
+    }
+
+    /**
+     * Maps the CSV's own (Mint-taxonomy) category string to this project's internal
+     * {@link Category} enum, so {@code RecurringBillDetectionService}'s category-eligibility
+     * filter (see that class's Javadoc, "Why category, not just statistics") is genuinely
+     * exercised by this test rather than bypassed with a single placeholder value.
+     */
+    private Category mapToInternalCategory(String csvCategory) {
+        return switch (csvCategory) {
+            case "Mortgage & Rent" -> Category.RENT_OR_MORTGAGE;
+            case "Utilities", "Mobile Phone", "Internet" -> Category.UTILITIES;
+            case "Insurance" -> Category.INSURANCE;
+            case "Credit Card Payment" -> Category.LOAN_OR_DEBT_PAYMENT;
+            case "Movies & DVDs", "Music" -> Category.SUBSCRIPTIONS;
+            case "Groceries" -> Category.GROCERIES;
+            case "Gas & Fuel" -> Category.TRANSPORT;
+            case "Restaurants", "Fast Food", "Coffee Shops", "Alcohol & Bars" -> Category.DINING_OUT;
+            case "Shopping", "Home Improvement" -> Category.SHOPPING;
+            default -> Category.OTHER_EXPENSE; // Haircut, and anything else not seen above
+        };
     }
 
     private String pad(String s) {

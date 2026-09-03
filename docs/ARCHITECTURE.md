@@ -67,12 +67,17 @@ without reading source code — see `docs/screenshots/04-decision-trace.png`.
 See the Javadoc on `RecurringBillDetectionService` for the full formula; in
 short:
 
-1. **Cluster** expense transactions by normalized merchant name (case,
-   punctuation, trailing reference numbers, and `.com`/`inc`-style suffixes
-   stripped), then fuzzy-merge clusters whose keys are Levenshtein-similar
-   (≥ 0.82) so statement-string drift ("NETFLIX.COM" vs "Netflix") doesn't
-   split one real bill into two.
-2. **Score** each cluster of ≥ 3 transactions on three signals normalized to
+1. **Filter to bill-eligible categories** — rent/mortgage, utilities,
+   insurance, loan payments, subscriptions. Everything else (groceries,
+   dining, transport, shopping, ...) is excluded before clustering even
+   starts, regardless of how consistent it later turns out to look — see
+   round 3 below for the real case that made this necessary.
+2. **Cluster** the remaining expense transactions by normalized merchant
+   name (case, punctuation, trailing reference numbers, and
+   `.com`/`inc`-style suffixes stripped), then fuzzy-merge clusters whose
+   keys are Levenshtein-similar (≥ 0.82) so statement-string drift
+   ("NETFLIX.COM" vs "Netflix") doesn't split one real bill into two.
+3. **Score** each cluster of ≥ 3 transactions on three signals normalized to
    `[0, 1]` — amount consistency, interval regularity, merchant-name
    similarity — combined as a weighted sum. Amount consistency and interval
    regularity are never computed from the raw sample variance: each is a
@@ -82,8 +87,8 @@ short:
    chance gets a properly inflated, more cautious variance estimate, while
    a long, genuinely consistent history doesn't.
 
-This mattered in practice twice, not just in theory — the algorithm's
-scoring has been shaped by two rounds of its own benchmark tests catching
+This mattered in practice three times, not just in theory — the algorithm's
+scoring has been shaped by three rounds of its own benchmark tests catching
 real problems, not just passing them:
 
 1. **The first version used a raw coefficient of variation with no
@@ -103,17 +108,28 @@ real problems, not just passing them:
    candidates' *uncorrected* consistency scores showed the underlying
    amount/interval signal was fine all along (R-Precision 1.00, the four
    real bills outranked all nine noise categories) — the linear penalty
-   itself was the bug, not the heuristic underneath it.
+   itself was the bug, not the heuristic underneath it. Replacing it with
+   the chi-squared upper-confidence-bound described above (which degrades
+   gracefully with actual statistical reliability instead of an arbitrary
+   occurrence count) took accuracy from 0.38 to 0.92 without moving the
+   synthetic benchmark off 1.00/1.00.
+3. **One false positive remained even after that fix, and it couldn't be
+   solved statistically.** Gas & Fuel — routine commute fill-ups — varied
+   by only 7% in amount and landed every ~14 days &plusmn;18%: genuinely,
+   not coincidentally, as regular as a subscription by the numbers alone.
+   No tightening of the amount/interval formula fixes that without also
+   risking real biweekly-ish bills elsewhere. What actually fixed it was a
+   signal statistics can't provide: `Category.isBillEligible()` restricts
+   candidacy to rent/mortgage, utilities, insurance, loan payments, and
+   subscriptions, regardless of how consistent a TRANSPORT or GROCERIES
+   cluster's statistics look. That took `RealWorldTransactionBenchmarkTest`
+   to a clean 1.00 precision / 1.00 recall — see `docs/BENCHMARKS.md` §2 for
+   the full three-round history and numbers.
 
-The chi-squared upper-confidence-bound described above replaced that linear
-penalty specifically because it degrades gracefully with the *actual*
-statistical reliability of a small sample instead of an arbitrary occurrence
-count, and it fixed both: `RecurringBillDetectionBenchmarkTest` is still
-1.00/1.00, and `RealWorldTransactionBenchmarkTest` went from 0.38 to 0.92
-accuracy on the same real data. One false positive remains there (Gas &
-Fuel, a genuinely ambiguous case even by manual inspection) and is reported
-rather than hidden — see `docs/BENCHMARKS.md` §2 for the full numbers and
-exactly why it's the one case this heuristic still gets wrong.
+The throughline across all three rounds: every fix came from a benchmark
+test finding a *specific, explained* failure — never from lowering a bar
+until an assertion passed, and never from hand-tuning a magic number to one
+dataset without checking it against the other.
 
 ## The recommendation engine's four checks
 

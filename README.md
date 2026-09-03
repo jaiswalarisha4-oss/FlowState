@@ -125,23 +125,32 @@ scoping it this way — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Rather than inventing arbitrary thresholds, the recommendation engine's
 output is checked directly against well-established, independently-documented
-personal-finance rules, and the recurring-bill detector is scored against a
-labeled synthetic dataset with standard precision/recall metrics. Full
-methodology and numbers (all real, reproducible by running `mvn test` —
-none of this is a placeholder) are in
+personal-finance rules, and the recurring-bill detector is scored against
+both a labeled synthetic dataset and a **real, independently-published
+transaction dataset this project didn't create**. Full methodology and
+numbers (all real, reproducible by running `./mvnw test` — none of this is a
+placeholder, including the one that came back worse than hoped) are in
 **[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)**. Headline results from the
 last run:
 
 | Benchmark | Result |
 |---|---|
 | Recurring-bill detection precision/recall (labeled synthetic dataset, 25 merchants) | **1.00 / 1.00** |
+| Recurring-bill detection on a real external dataset (105 real transactions, no merchant field, only 3 months of history) | **0.38 accuracy at the shipped threshold** — and a root-cause breakdown showing the underlying signal still ranks all 4 real bills above all 9 noise categories (R-Precision 1.00); see below |
 | 50/30/20 budgeting rule — exact-target & overspend scenarios | Engine output matches hand-computed percentages to 1 decimal place |
 | 3-6 month emergency-fund guideline | Shortfall/surplus computed exactly against the benchmark range |
 | 36% debt-to-income ceiling | Correctly flags scenarios above/below the ceiling |
 | Shock scenario (volatile vs. stable bill history) | Confidence interval widens (₹0 → ₹2,462) and the safe-to-invest figure drops (−6.0%) under uncertainty, as it should |
 
+The external-dataset result is reported at face value rather than tuned
+until it looked better — see `docs/BENCHMARKS.md` §2 for exactly why it
+comes back low (short-history bills get penalized by a sample-size factor
+calibrated on longer synthetic history) and what the same test proves is
+*not* the cause (the core amount/interval signal, which still separates
+real bills from real noise perfectly).
+
 ```bash
-./mvnw test    # 11 tests, ~6s
+./mvnw test    # 12 tests, ~6s
 ```
 
 ## Project structure
@@ -163,9 +172,13 @@ src/main/resources/
 └── application.yml
 
 src/test/java/com/flowstate/
-├── service/RecurringBillDetectionBenchmarkTest.java
+├── service/RecurringBillDetectionBenchmarkTest.java   # synthetic labeled dataset
+├── service/RealWorldTransactionBenchmarkTest.java      # real external dataset
 ├── service/RecommendationEngineBenchmarkTest.java
 └── util/MerchantNormalizerAndSimilarityTest.java
+
+src/test/resources/external-datasets/
+└── personal_transactions.csv   # real, independently-published data (see docs/BENCHMARKS.md §2)
 
 docs/
 ├── ARCHITECTURE.md    # request flow, algorithm details, design decisions
@@ -225,6 +238,17 @@ in depth, beyond "I built a budgeting app":
   small, concrete example of "my test caught a real statistical issue, here's
   the fix and why it's principled rather than a threshold hack." Full story
   in `docs/ARCHITECTURE.md`.
+- **The external-dataset result that came back worse, and what it actually
+  means.** Running the detector against a real transaction file this
+  project didn't generate produced 0.38 accuracy at the shipped threshold —
+  a genuinely bad number, reported as-is in `docs/BENCHMARKS.md` §2. The
+  follow-up analysis in the same test (recomputing the raw signal without
+  the sample-size dampening, R-Precision 1.00) is what turns "the algorithm
+  is broken" into "the algorithm's confidence threshold doesn't generalize
+  below ~6 months of history, and here's proof the underlying math is
+  still sound." That distinction — and being willing to publish the bad
+  number to make it — is a stronger interview answer than a suspiciously
+  perfect one.
 - **Why the safe-to-invest number uses an upper confidence bound, not an
   average.** Recommending the average case would silently mean the "safe"
   amount is wrong roughly half the time. The 1.645σ one-sided bound and the
@@ -241,6 +265,10 @@ in depth, beyond "I built a budgeting app":
 
 ## Possible future work
 
+- Fix the sample-size dampening's short-history behavior found by
+  `docs/BENCHMARKS.md` §2 — e.g. decouple it from a single global
+  occurrence-count denominator, or surface raw-signal rank alongside the
+  absolute confidence threshold for accounts under ~6 months old.
 - Real forecasting model (Prophet/ARIMA) behind the same
   `RecommendationEngine` interface, swapping out the closed-form
   upper-confidence-bound calculation.

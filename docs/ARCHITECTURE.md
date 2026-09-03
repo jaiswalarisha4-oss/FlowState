@@ -87,6 +87,23 @@ lucky over a small sample. Requiring more history before trusting the
 consistency numbers fixed it — and is a more honest reflection of how
 confident anyone should be from 4-5 data points.
 
+That fix has a cost, and external validation is what surfaced it:
+`RealWorldTransactionBenchmarkTest` runs the same detector against a real,
+independently-published transaction file this project didn't generate. On
+that data — only 3 months of history, so genuine bills top out at 3
+occurrences — the sample-size dampening above pulls every real bill's
+confidence below the display threshold, while frequent-but-noisy
+discretionary categories (16 restaurant visits) sail past it. Accuracy on
+that run is a genuinely bad 0.38, and `docs/BENCHMARKS.md` reports that
+number as-is rather than around it. What the same test also shows is that
+the *underlying* amount/interval signal, recomputed without the dampening,
+still ranks all 4 real bills above all 9 noise categories (R-Precision
+1.00) — so the fix from the synthetic test and the failure on the real one
+are two sides of the same trade-off (confidence needs history to mean
+anything, but "needs history" has to degrade gracefully for a 3-month-old
+account, and right now it doesn't). That's a concrete, disclosed limitation
+rather than a papered-over one, and a natural next thing to fix.
+
 ## The recommendation engine's four checks
 
 | Check | What it computes | Benchmark it's validated against |

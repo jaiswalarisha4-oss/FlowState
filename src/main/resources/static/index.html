@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowState — Personal Finance Assistant</title>
+    <link rel="stylesheet" href="/style.css">
+    <!-- Chart.js is vendored locally (see /vendor/chart.umd.js) rather than pulled from a CDN,
+         so the app has zero external network dependencies at runtime. -->
+    <script src="/vendor/chart.umd.js"></script>
+</head>
+<body>
+<div id="app">
+
+    <!-- ===================== AUTH VIEW ===================== -->
+    <section id="auth-view" class="auth-view">
+        <div class="auth-card">
+            <div class="brand">
+                <span class="brand-mark">FS</span>
+                <h1>FlowState</h1>
+            </div>
+            <p class="tagline">Track income, expenses &amp; recurring bills — and see exactly why every
+                recommendation is made.</p>
+
+            <div class="auth-tabs">
+                <button class="tab-btn active" data-tab="login">Log in</button>
+                <button class="tab-btn" data-tab="register">Create account</button>
+            </div>
+
+            <form id="login-form" class="auth-form">
+                <label>Email<input type="email" id="login-email" required></label>
+                <label>Password<input type="password" id="login-password" required></label>
+                <button type="submit" class="btn-primary">Log in</button>
+                <p class="hint">Demo account — email <code>demo@flowstate.app</code>, password
+                    <code>flowstate123</code> (9 months of synthetic transaction history pre-loaded).</p>
+                <button type="button" id="fill-demo" class="btn-secondary">Use demo account</button>
+            </form>
+
+            <form id="register-form" class="auth-form hidden">
+                <label>Name<input type="text" id="register-name" required></label>
+                <label>Email<input type="email" id="register-email" required></label>
+                <label>Password<input type="password" id="register-password" minlength="8" required></label>
+                <button type="submit" class="btn-primary">Create account</button>
+                <p class="hint">New accounts start empty — no bank is connected anywhere in this project. Use
+                    the demo account to see a fully populated dashboard.</p>
+            </form>
+
+            <p id="auth-error" class="error hidden"></p>
+        </div>
+    </section>
+
+    <!-- ===================== DASHBOARD VIEW ===================== -->
+    <section id="dashboard-view" class="dashboard-view hidden">
+        <header class="topbar">
+            <div class="brand">
+                <span class="brand-mark">FS</span>
+                <h1>FlowState</h1>
+            </div>
+            <nav class="tabs">
+                <button class="nav-btn active" data-view="overview">Overview</button>
+                <button class="nav-btn" data-view="bills">Recurring Bills</button>
+                <button class="nav-btn" data-view="transactions">Transactions</button>
+                <button class="nav-btn" data-view="audit">Audit Log</button>
+            </nav>
+            <div class="user-box">
+                <span id="user-name"></span>
+                <button id="logout-btn" class="btn-secondary">Log out</button>
+            </div>
+        </header>
+
+        <div class="disclosure-banner">
+            <strong>AI-generated content.</strong> Every number below is produced by a rules-based recommendation
+            engine running on synthetic/sandbox data — not a licensed financial adviser and not connected to a
+            real bank or brokerage. Every recommendation is logged with a model version and can be expanded into
+            its full decision trace. See the <a href="https://github.com" id="readme-link" target="_blank"
+                rel="noopener">README</a> for scope &amp; disclaimers.
+        </div>
+
+        <!-- ---- Overview ---- -->
+        <main id="view-overview" class="view">
+            <div class="stat-cards">
+                <div class="stat-card highlight">
+                    <div class="stat-label">Safe to invest today</div>
+                    <div class="stat-value" id="stat-safe-to-invest">—</div>
+                    <div class="stat-sub" id="stat-safe-range">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Net worth</div>
+                    <div class="stat-value" id="stat-net-worth">—</div>
+                </div>
+                <div class="stat-card" id="account-cards-container"></div>
+            </div>
+
+            <div class="panel-grid">
+                <div class="panel">
+                    <h2>Income vs. expenses (trailing 9 months)</h2>
+                    <canvas id="trend-chart" height="110"></canvas>
+                </div>
+                <div class="panel">
+                    <h2>Spending vs. the 50/30/20 rule</h2>
+                    <canvas id="budget-chart" height="110"></canvas>
+                    <p class="chart-note">Benchmark: 50/30/20 Budgeting Rule (Elizabeth Warren, 2005) — needs
+                        50%, wants 30%, savings/debt 20% of income.</p>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Recommendations</h2>
+                <div id="recommendations-list" class="recommendation-list"></div>
+            </div>
+        </main>
+
+        <!-- ---- Recurring bills ---- -->
+        <main id="view-bills" class="view hidden">
+            <div class="panel">
+                <h2>Detected recurring bills</h2>
+                <p class="chart-note">Confidence is computed from amount consistency, interval regularity and
+                    merchant-name similarity across occurrences — not a binary yes/no label. See
+                    <code>RecurringBillDetectionService</code> for the formula.</p>
+                <table class="data-table" id="bills-table">
+                    <thead>
+                    <tr>
+                        <th>Merchant</th><th>Category</th><th>Avg amount</th><th>Every ~</th>
+                        <th>Confidence</th><th>Occurrences</th><th>Next predicted</th>
+                    </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </main>
+
+        <!-- ---- Transactions ---- -->
+        <main id="view-transactions" class="view hidden">
+            <div class="panel">
+                <h2>Recent transactions</h2>
+                <table class="data-table" id="transactions-table">
+                    <thead>
+                    <tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th>Type</th><th>Amount</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </main>
+
+        <!-- ---- Audit log ---- -->
+        <main id="view-audit" class="view hidden">
+            <div class="panel">
+                <h2>Audit log</h2>
+                <p class="chart-note">Every recommendation generated is written here with its model version and
+                    timestamp — the governance/explainability layer's paper trail.</p>
+                <table class="data-table" id="audit-table">
+                    <thead>
+                    <tr><th>Timestamp</th><th>Action</th><th>Model version</th><th>Details</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </main>
+    </section>
+
+    <!-- ===================== DECISION TRACE MODAL ===================== -->
+    <div id="trace-modal" class="modal hidden">
+        <div class="modal-content">
+            <button class="modal-close" id="trace-close">&times;</button>
+            <h2 id="trace-title">Decision trace</h2>
+            <div id="trace-body"></div>
+        </div>
+    </div>
+
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -76,9 +76,11 @@ To run the test suite (including the benchmark validation described below):
   with income/expense categorization.
 - **Recurring-bill detection** with a confidence score, not a binary
   yes/no — clusters transactions by amount consistency, interval
-  regularity, and fuzzy merchant-name matching. See it live: 23 merchants
-  detected and ranked from 92% confidence (rent) down to 19% (one-off
-  shopping) in the demo dataset.
+  regularity, fuzzy merchant-name matching, and a category-eligibility
+  check (statistics alone can't tell a gas station fill-up from a bill —
+  see `docs/BENCHMARKS.md` §2 for the real case that proved it). See it
+  live: 7 genuine bills detected in the demo dataset, ranked 97% down to
+  80% confidence, with no discretionary spending cluttering the list.
   ![Recurring bills](docs/screenshots/03-recurring-bills.png)
 - **Explainable recommendations** — safe-to-invest surplus, budget checks
   against the 50/30/20 rule, an emergency-fund check, and a debt-to-income
@@ -126,16 +128,19 @@ scoping it this way — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Rather than inventing arbitrary thresholds, the recommendation engine's
 output is checked directly against well-established, independently-documented
 personal-finance rules, and the recurring-bill detector is scored against
-both a labeled synthetic dataset and a **real, independently-published
-transaction dataset this project didn't create**. Full methodology and
-numbers (all real, reproducible by running `./mvnw test` — none of this is a
-placeholder) are in **[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)**. Headline
-results from the last run:
+a labeled synthetic dataset **and two real, independently-published
+transaction datasets this project didn't create** — one a 3-month CSV, one
+2,461 real transactions over 3.7 years, explicitly sourced from Kaggle. Full
+methodology and numbers (all real, reproducible by running `./mvnw test` —
+none of this is a placeholder) are in
+**[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)**. Headline results from the
+last run:
 
 | Benchmark | Result |
 |---|---|
 | Recurring-bill detection precision/recall (labeled synthetic dataset, 25 merchants) | **1.00 / 1.00** |
 | Recurring-bill detection on a real external dataset (105 real transactions, no merchant field, only 3 months of history) | **1.00 / 1.00 / 1.00** (precision / recall / accuracy) — got there in two documented rounds, not on the first attempt; see below |
+| Recurring-bill detection on a real Kaggle-sourced dataset (2,461 real transactions, 3.7 years) | **1.00 precision / 0.71 recall** — zero false positives, including on two real investment-SIP statistical traps; see below |
 | 50/30/20 budgeting rule — exact-target & overspend scenarios | Engine output matches hand-computed percentages to 1 decimal place |
 | 3-6 month emergency-fund guideline | Shortfall/surplus computed exactly against the benchmark range |
 | 36% debt-to-income ceiling | Correctly flags scenarios above/below the ceiling |
@@ -155,10 +160,22 @@ risking real ones elsewhere, so the actual fix was a signal statistics can't
 provide: a category-eligibility check (`Category.isBillEligible()`) that
 excludes non-bill categories like groceries, dining, and transport
 regardless of how consistent they look. That's what got it to 1.00 across
-the board. Full three-round history in `docs/BENCHMARKS.md` §2.
+the board.
+
+The Kaggle-sourced dataset (§3) is where that same category filter proved
+itself on data collected years before this project existed: it contains a
+monthly mutual fund SIP and a recurring deposit, both statistically
+indistinguishable from a perfect subscription (dozens of occurrences, zero
+amount variance) — and both correctly excluded before scoring, because an
+investment isn't a bill regardless of how consistent it looks. The 0.71
+recall there is reported honestly too: two genuine bills (a gas utility at
+45.8% confidence, one subscription with only 3 real-world-noisy
+occurrences) fell just short of the display threshold on real, messy,
+multi-year data — not a clean sweep, and not presented as one. Full history
+across both real datasets in `docs/BENCHMARKS.md` §2-3.
 
 ```bash
-./mvnw test    # 12 tests, ~6s
+./mvnw test    # 13 tests, ~6s
 ```
 
 ## Project structure
@@ -181,12 +198,14 @@ src/main/resources/
 
 src/test/java/com/flowstate/
 ├── service/RecurringBillDetectionBenchmarkTest.java   # synthetic labeled dataset
-├── service/RealWorldTransactionBenchmarkTest.java      # real external dataset
+├── service/RealWorldTransactionBenchmarkTest.java      # real external dataset (3 months)
+├── service/KaggleTransactionBenchmarkTest.java         # real Kaggle-sourced dataset (3.7 years)
 ├── service/RecommendationEngineBenchmarkTest.java
 └── util/MerchantNormalizerAndSimilarityTest.java
 
 src/test/resources/external-datasets/
-└── personal_transactions.csv   # real, independently-published data (see docs/BENCHMARKS.md §2)
+├── personal_transactions.csv          # real data, see docs/BENCHMARKS.md §2
+└── daily_household_transactions.csv   # Kaggle-sourced, see docs/BENCHMARKS.md §3
 
 docs/
 ├── ARCHITECTURE.md    # request flow, algorithm details, design decisions
@@ -259,6 +278,16 @@ in depth, beyond "I built a budgeting app":
   all three rounds, including the numbers that looked bad before each real
   fix, is a stronger interview answer than a clean story with only one
   draft. Full history in `docs/ARCHITECTURE.md` and `docs/BENCHMARKS.md` §2.
+- **A second real dataset that confirmed the fix rather than just repeating
+  it.** The Kaggle-sourced dataset (`docs/BENCHMARKS.md` §3) covers 3.7
+  years, not 3 months, and happens to contain a real monthly mutual fund
+  SIP and a recurring deposit — both with literally zero amount variance
+  across dozens of occurrences, a harder statistical trap than anything in
+  the other two datasets. Both were excluded before scoring, on data
+  collected years before this project existed, which is a much stronger
+  claim than "it passed the test I wrote it to pass." The 0.71 recall
+  (two genuine bills missed on real, messy, human-entered data) is
+  reported next to that, not hidden behind the good precision number.
 - **Why the safe-to-invest number uses an upper confidence bound, not an
   average.** Recommending the average case would silently mean the "safe"
   amount is wrong roughly half the time. The 1.645σ one-sided bound and the

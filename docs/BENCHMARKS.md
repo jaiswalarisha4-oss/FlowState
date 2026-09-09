@@ -6,7 +6,7 @@ running the tests named next to it. This file is what backs the "tested
 against proven external benchmarks" claim in the README and resume bullets
 — see each test's Javadoc for the full methodology.
 
-Last measured: 2026-09-03, on `mvn test` against commit at time of writing.
+Last measured: 2026-09-09, on `./mvnw test` against commit at time of writing.
 
 ## 1. Recurring-bill detection — precision/recall on a labeled synthetic dataset
 
@@ -127,7 +127,81 @@ the other way around (see the commit history).
 
 Reproduce: `./mvnw -Dtest=RealWorldTransactionBenchmarkTest test`
 
-## 3. Recommendation engine vs. external personal-finance benchmarks
+## 3. A second real dataset — this one explicitly from Kaggle
+
+**Test:** `KaggleTransactionBenchmarkTest`
+
+Section 2's dataset covers only 3 months, so every genuine bill in it tops
+out at 3 occurrences — useful for stress-testing the short-history edge
+case, but not representative of the regime the detector was actually tuned
+for. This section runs the same detector against
+`daily_household_transactions.csv`: **2,461 real transactions spanning
+January 2015 - September 2018** (3.7 years), one person's self-tracked
+household finances in INR, originally published on Kaggle as
+[`prasad22/daily-transactions-dataset`](https://www.kaggle.com/datasets/prasad22/daily-transactions-dataset)
+and fetched here via a GitHub mirror
+(`raw.githubusercontent.com/marcosfabietti/pivot_in_r`) whose own README
+cites that exact Kaggle URL as its source — Kaggle itself isn't reachable
+from this project's build/CI environment, so the mirror is used, with the
+provenance kept explicit rather than hidden. Copy embedded at
+`src/test/resources/external-datasets/`.
+
+This dataset has a genuine merchant-like field (`Subcategory`: "Netflix",
+"Tata Sky", "Mahanagar Gas", ...) rather than only a spending category, and
+it contains something the short 3-month dataset didn't: **real recurring
+investments that are statistically almost perfect without being bills** —
+a monthly mutual fund SIP and a recurring deposit, both with essentially
+zero amount variance across dozens of occurrences. That's exactly the
+shape of false positive the category filter (§2) was built to catch, now
+tested against a real trap this project never saw while building that
+filter.
+
+| Metric | Value |
+|---|---|
+| True positives | 5 / 7 |
+| False positives | 0 |
+| **Precision** | **1.00** |
+| **Recall** | **0.71** |
+| **Accuracy** | **0.71** |
+
+| Merchant | Confidence | Occurrences | Ground truth |
+|---|---:|---:|---|
+| Kindle Unlimited | 91.8% | 4 | recurring ✅ |
+| Cable TV | 60.0% | 3 | recurring ✅ |
+| Tata Sky | 54.0% | 24 | recurring ✅ |
+| Rent | 53.1% | 4 | recurring ✅ |
+| Netflix | 51.2% | 8 | recurring ✅ |
+| Mahanagar Gas | 45.8% | 5 | recurring — missed, just below the 50% threshold |
+| Hotstar | 15.0% | 3 | recurring — missed, small sample + real noise |
+| **Mutual fund** (SIP) | — | 66 | investment — correctly excluded by category filter before scoring |
+| **Recurring Deposit** / **RD** | — | 22 / 22 | investment — correctly excluded by category filter |
+| **Public Provident Fund** | — | 20 | investment — correctly excluded by category filter |
+
+**Zero false positives, including on the two statistical traps.** Both the
+mutual fund SIP (66 occurrences, literally zero amount variance) and the
+recurring deposit (22 occurrences, also zero variance) never even reach
+the scoring stage — `Category.isBillEligible()` excludes `INVESTMENT`
+regardless of how perfect their statistics look. `KaggleTransactionBenchmarkTest`
+asserts this explicitly: if either one is ever flagged, the test fails
+immediately, independent of the recall number.
+
+**The two misses are honest, not swept under a looser bar.** Mahanagar Gas
+sits right at 45.8% — a close call the variance bound didn't quite clear.
+Hotstar has only 3 occurrences with real-world timing noise, exactly the
+regime where the chi-squared bound is deliberately most conservative (§2).
+Two other candidates — Mobile Service Provider (66 occurrences but 1.46
+amount coefficient of variation — prepaid recharges of visibly different
+amounts) and Newspaper (similar variance) — are excluded from the ground
+truth entirely rather than counted as misses, applying the exact same
+standard already used for "Credit Card Payment" in §2 (a real recurring
+event whose amount swings too much to count as a fixed bill): their
+variance is actually *higher* than that precedent case's (1.46 vs. 0.52),
+so excluding them is the same rule applied consistently, not a new one
+invented to flatter this dataset's numbers.
+
+Reproduce: `./mvnw -Dtest=KaggleTransactionBenchmarkTest test`
+
+## 4. Recommendation engine vs. external personal-finance benchmarks
 
 **Test:** `RecommendationEngineBenchmarkTest`
 
@@ -146,7 +220,7 @@ exact arithmetic on constructed transaction totals):
 
 Reproduce: `mvn -Dtest=RecommendationEngineBenchmarkTest#budgetCheck_exactlyOnTarget_isFlaggedWithinBand,RecommendationEngineBenchmarkTest#budgetCheck_overspendingOnWants_isFlaggedAboveTarget,RecommendationEngineBenchmarkTest#emergencyFund_belowThreeMonths_flagsShortfallAgainstGuideline,RecommendationEngineBenchmarkTest#debtToIncome_aboveGuideline_isFlaggedAbove36Percent test`
 
-## 4. Shock scenario — does the engine get more conservative under uncertainty?
+## 5. Shock scenario — does the engine get more conservative under uncertainty?
 
 **Test:** `RecommendationEngineBenchmarkTest#shockScenario_volatileBillHistoryWidensIntervalAndLowersSafeToInvest`
 
@@ -167,7 +241,7 @@ The engine correctly widens the interval and lowers the recommended amount
 when the underlying data is noisier — it does not just report the average
 case as if it were certain.
 
-## 5. Utility-level correctness
+## 6. Utility-level correctness
 
 **Test:** `MerchantNormalizerAndSimilarityTest` — merchant-string normalization
 (case, punctuation, trailing reference numbers, `.com`/`inc`-style suffixes)
@@ -180,6 +254,6 @@ clustering is built on. 4/4 passing.
 ./mvnw test
 ```
 
-12 tests, 0 failures, ~6 seconds on a typical laptop (excluding the first-run
+13 tests, 0 failures, ~6 seconds on a typical laptop (excluding the first-run
 Maven dependency download). CI runs this on every push — see
 `.github/workflows/ci.yml`.

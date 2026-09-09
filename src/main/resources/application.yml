@@ -2,7 +2,7 @@ spring:
   application:
     name: flowstate
   datasource:
-    url: jdbc:h2:file:./data/flowstate;AUTO_SERVER=TRUE
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/flowstate;AUTO_SERVER=TRUE}
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -19,7 +19,7 @@ spring:
       path: /h2-console
 
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 logging:
   level:

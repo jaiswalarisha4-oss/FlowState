@@ -70,6 +70,37 @@ To run the test suite (including the benchmark validation described below):
 ./mvnw test
 ```
 
+## Deploying
+
+The repo ships a `Dockerfile` and a `render.yaml` blueprint, so it deploys
+to [Render](https://render.com) as a free web service with no extra setup:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/jaiswalarisha4-oss/FlowState)
+
+Or manually: **New → Blueprint** on Render, point it at this repo, and it
+reads `render.yaml` automatically. The build takes a few minutes (compiling
+the jar inside the Docker build) and the free tier spins the service down
+after inactivity, so the first request after a while can be slow to wake it.
+
+Two things to know about the deployed instance:
+
+- **Data does not persist.** The blueprint runs H2 as `jdbc:h2:mem:...`
+  (in-memory) on purpose, matching the "synthetic demo, not a real product"
+  scope of this project — every restart/redeploy wipes all accounts back to
+  just the seeded demo user. If you want data to survive restarts, switch to
+  a real database (e.g. add a Render Postgres instance and point
+  `SPRING_DATASOURCE_URL`/driver at it) — that's a deliberate scope decision
+  left undone here, not an oversight.
+- **The demo login is public.** `demo@flowstate.app` / `flowstate123` is the
+  same seeded account described above — anyone with the URL can sign in as
+  it. Fine for sharing a portfolio link, not something to reuse for real data.
+
+Any Docker-capable host works the same way (Railway, Fly.io, a VPS) since
+deployment is just `docker build . && docker run -p 8080:8080 -e PORT=8080 ...`
+— `server.port` and the datasource URL both read from environment variables
+(`PORT`, `SPRING_DATASOURCE_URL`) with the local-dev file-based H2 setup as
+the default when they're unset.
+
 ## Features
 
 - **Transaction tracking** across multiple accounts (checking, savings),

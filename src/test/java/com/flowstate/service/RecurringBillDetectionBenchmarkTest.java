@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * that label with standard precision/recall/F1 — the same metric the
  * original project brief's "shock simulator backtest" concept calls for,
  * scaled down to something a solo student build can run in milliseconds
- * and defend in an interview with an exact number, not a vague claim.
+ * and reason about with an exact number, not a vague claim.
  *
  * Results from the last run of this test are copied into
  * docs/BENCHMARKS.md — see that file for the actual measured numbers.

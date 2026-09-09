@@ -162,7 +162,7 @@ For a solo, from-scratch, Java rebuild, that scope was cut down deliberately:
   database runs with `mvn spring-boot:run` and nothing else. The tradeoff —
   no independent horizontal scaling of the forecasting step — is irrelevant
   at this project's scale and is an easy, honest thing to name as a known
-  limitation in an interview.
+  limitation.
 - **Rules-based forecasting, not Prophet/LSTM.** The upper-confidence-bound
   buffer calculation (mean + 1.645×σ over near-term recurring bills) is a
   closed-form statistical estimate, not a trained time-series model. It's
@@ -181,7 +181,7 @@ For a solo, from-scratch, Java rebuild, that scope was cut down deliberately:
   in the README.
 - **Governance layer kept, scaled down.** The audit-log + model-versioning +
   disclosure-banner idea from the brief survived the cut because it's cheap
-  to build correctly and is the most defensible interview differentiator per
+  to build correctly and is the most defensible differentiator per
   the brief's own framing (industry research consistently cites governance,
   not modeling capability, as the actual blocker to shipping automated
   financial advice). What didn't survive: the SEBI-specific regulatory

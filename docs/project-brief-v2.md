@@ -8,9 +8,9 @@
 > validation) but deliberately scopes the implementation down to a single
 > Spring Boot application with synthetic data instead of live bank/brokerage
 > sandboxes. See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md#design-decision-why-this-is-a-single-spring-boot-app-not-the-original-multi-service-plan)
-> for exactly what changed and why — that pivot is itself kept here as an
-> interview talking point, the same way this brief kept its own v1→v2 pivot
-> rationale below.
+> for exactly what changed and why — that pivot is itself kept here as a
+> documented example of a design decision changed for a defensible reason,
+> the same way this brief kept its own v1→v2 pivot rationale below.
 
 ---
 
@@ -33,7 +33,7 @@ FlowState is an agentic personal-finance system that forecasts how much of a use
 
 The original concept centered on autonomous one-click trade execution — sweeping detected "surplus" directly into equities. Competitive research showed this is (a) already commoditized across robo-advisors and enterprise agent products, and (b) legally gated in a way that a solo/student build cannot satisfy. The redesign keeps the hard, genuinely differentiated part — predicting *safe-to-invest* liquidity under uncertainty — and replaces the autonomy-as-headline framing with a governance-and-explainability-as-headline framing, which is both more defensible and closer to where the real 2026 industry problem sits.
 
-*(This pivot itself is a strong interview answer to "walk me through a design decision you changed" — it demonstrates you evaluated the market and regulatory landscape rather than just shipping the first idea.)*
+*(This pivot documents evaluating the market and regulatory landscape rather than just shipping the first idea, not just changing course arbitrarily.)*
 
 ---
 
@@ -121,12 +121,12 @@ recommendation and model version that produced it
 
 ---
 
-## Key Differentiators (and why they matter in an interview)
+## Key Differentiators
 
 - **You're not pitching "we automated investing"** — you're pitching that you identified automation as commoditized and solved the actual bottleneck (trust/governance) that industry research says is blocking real-world deployment.
 - **The shock simulator gives you a real, defensible metric** instead of a vague claim — e.g., "backtested against N synthetic income-shock scenarios, X% of 'safe' recommendations held, Y% false-positive rate on scenarios that would have caused a shortfall." This is the single most resume-worthy artifact in the project.
 - **You designed against a real regulatory framework**, not a hypothetical one. Naming SEBI's actual 2026 AI Accountability requirements (model versioning, disclosure, human oversight, sandbox testing) and showing you built infrastructure for them demonstrates maturity most student fintech projects don't have.
-- **Explainability is a UI-visible feature, not a backend footnote** — the decision-trace viewer is something you can actually demo live in an interview, which matters more than describing an accuracy number.
+- **Explainability is a UI-visible feature, not a backend footnote** — the decision-trace viewer is something you can actually demo live, which matters more than describing an accuracy number.
 
 ---
 
@@ -154,7 +154,7 @@ Assumes solo, part-time work alongside coursework (~12-15 hrs/week). Adjust pace
 | 3 | Explainability + recommendation flow | 1 week | Week 6 |
 | 4 | Shock simulator + backtest metrics | 2 weeks | Week 8 |
 | 5 | Compliance/governance layer | 1 week | Week 9 |
-| 6 | Polish + interview prep | 1 week | Week 10 |
+| 6 | Polish + final review | 1 week | Week 10 |
 
 *(Full stage-by-stage detail omitted here — see the original brief for the
 day-by-day breakdown. This repository's implementation followed the same
